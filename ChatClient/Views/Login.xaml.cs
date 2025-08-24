@@ -1,4 +1,5 @@
 ﻿using ChatClient.Services;
+using ChatClient.ViewModel;
 using ChatClient.ViewModels;
 using System;
 using System.Collections.Generic;
@@ -13,6 +14,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
+using static Emoji.Wpf.EmojiData;
 
 namespace ChatClient.Views
 {
@@ -21,12 +23,14 @@ namespace ChatClient.Views
     /// </summary>
     public partial class Login : Window
     {
+        //public EmojiViewModel EmojiVM { get; set; }
         public Login()
         {
             InitializeComponent();
         }
+        
 
-        private void Button_Click(object sender, RoutedEventArgs e)
+        private async void Button_Click(object sender, RoutedEventArgs e)
         {
             var nickname = UsernameTextBox.Text?.Trim();
             if (string.IsNullOrWhiteSpace(nickname))
@@ -37,14 +41,21 @@ namespace ChatClient.Views
             var service = new TcpClientService(port: 3234);
             
             service.StartClient("127.0.0.1", nickname);
-            var vm = new ChatViewModel(service, nickname);
-
-            var main = new MainWindow
+            
+            var emojiVM = new EmojiViewModel();
+            emojiVM.LoadEmojis();
+            
+            var vm = new ChatViewModel(service, nickname,emojiVM);
+            
+            
+            var main = new MainWindow(service,nickname)
             {
                 DataContext = vm
+               
+
             };
             main.Show();
-
+                
             Close();
         }
     }

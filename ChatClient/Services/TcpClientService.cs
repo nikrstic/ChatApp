@@ -1,5 +1,6 @@
 ﻿using ChatShared.Models;
 using System;
+using System.Collections.ObjectModel;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
@@ -18,6 +19,9 @@ namespace ChatClient.Services
         public event Action Connected;
         public event Action Disconnected;
 
+
+        
+
         private class ObjectState
         {
             public const int BufferSize = 4096;
@@ -32,13 +36,20 @@ namespace ChatClient.Services
         {
             try
             {
+                
+
                 // Uzmi IPv4 adresu
                 var entry = Dns.GetHostEntry(host);
                 var ip = entry.AddressList.First(a => a.AddressFamily == AddressFamily.InterNetwork);
                 var endPoint = new IPEndPoint(ip, _port);
-
+                
+           
+                
                 _client = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
                 _client.BeginConnect(endPoint, ConnectionCallback, nickname); // prosledimo nickname u state
+                // ovde ga prebacio da se salje sto pre
+                var join = new Message { Type = "join", From = nickname };
+                SendMessage(join);
             }
             catch (Exception ex)
             {
@@ -50,13 +61,16 @@ namespace ChatClient.Services
         {
             try
             {
-                string nickname = (string)ar.AsyncState;
                 _client.EndConnect(ar);
-                Connected?.Invoke();
+                
 
-                // Pošalji JOIN čim se povežeš
-                var join = new Message { Type = "join", From = nickname, Text = "" };
-                SendMessage(join);
+                string nickname = (string)ar.AsyncState;
+                
+                Connected?.Invoke();
+                 
+                //// Posalji join kad se povezes - prebacio negde ranije da se ne desavaju problemi
+                //var join = new Message { Type = "join", From = nickname };
+                //SendMessage(join);
 
                 BeginReceive();
             }
@@ -102,19 +116,22 @@ namespace ChatClient.Services
                     string frame = data.Substring(0, idx);
                     data = data.Substring(idx + 5);
 
-                    // pošalji UI-ju sirovi JSON (VM može po želji da deserializuje)
                     MessageReceived?.Invoke(frame);
+                   
+
+                    
+                    
                 }
 
                 _accumulator.Clear();
                 _accumulator.Append(data);
 
-                // nastavi da primaš
+                // nastavi da primas
                 BeginReceive();
             }
             catch (ObjectDisposedException)
             {
-                // socket zatvoren – ignoriši
+                // socket zatvoren 
             }
             catch (Exception ex)
             {

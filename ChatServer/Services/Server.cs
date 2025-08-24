@@ -1,18 +1,23 @@
 ﻿using ChatServer.Models;
+
+using ChatShared;
 using ChatShared.Models;
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using static System.Net.Mime.MediaTypeNames;
 
 namespace ChatServer.Services
 {
-    class Server
+    public class Server
     {
         static int ID = 100;
         static Dictionary<Socket, ClientInfo> klijenti = new Dictionary<Socket, ClientInfo>();
@@ -48,9 +53,10 @@ namespace ChatServer.Services
 
             handler.BeginReceive(state.buffer, 0, ObjectState.bufferSize, 0, new AsyncCallback(ReadCallBack), state);
         }
-
+        // kad stigne nesto od klijenta
         public static void ReadCallBack(IAsyncResult ar)
         {
+            // podaci o klijentu
             ObjectState state = (ObjectState)ar.AsyncState;
             Socket handler = state.wSocket;
 
@@ -60,65 +66,97 @@ namespace ChatServer.Services
 
                 if (bytesRead > 0)
                 {
-                    state.sb.Append(Encoding.ASCII.GetString(state.buffer, 0, bytesRead));
+                    state.sb.Append(Encoding.UTF8.GetString(state.buffer, 0, bytesRead));
                     string content = state.sb.ToString();
 
-                    if (content.IndexOf("<EOF>", StringComparison.Ordinal) > -1)
+                    int idx = 0;
+
+                    while ((idx = content.IndexOf("<EOF>", StringComparison.Ordinal)) >= 0)
                     {
-                        string cleanMessage = content.Replace("<EOF>", "").Trim();
-                        Message msg = JsonSerializer.Deserialize<Message>(cleanMessage);
+                        string frame = content.Substring(0, idx);
+                        content = content.Substring(idx + 5);
 
 
-                        if (!klijenti.ContainsKey(handler))
+                        try
                         {
-                            // Prva poruka je nickname
-                            string nickname = msg.From;
-                            ClientInfo info = new ClientInfo
-                            {
-                                Socket = handler,
-                                ID = ID++,
-                                Nickname = nickname
-                            };
-                            lock (klijenti)
-                            {
-                                klijenti.Add(handler, info);
-                            }
+                            var msg = JsonSerializer.Deserialize<Message>(frame);
 
-                            //Console.WriteLine($"Klijent povezan: {nickname} ({handler.RemoteEndPoint})");
-                            Send(handler, JsonSerializer.Serialize(new Message
-                            {
-                                Type = "system",
-                                Text = $"Dobrodošao, {info.Nickname}!"
-                            }) + "<EOF>");
 
+                                //string cleanMessage = content.Replace("<EOF>", "").Trim();
+
+                                if (!klijenti.ContainsKey(handler) && msg.Type == "join")
+                                {
+                                    string nickname = msg.From;
+                                    var info = new ClientInfo { Socket = handler, ID = ID++, Nickname = nickname };
+
+                                    lock (klijenti)
+                                        klijenti[handler] = info;
+
+                                    // saljemo mu inicijalne podatke
+                                    var init = new
+                                    {
+                                        Type = "init",
+                                        Users = klijenti.Values.Select(c => c.Nickname).ToList(),
+                                        Welcome = $"Dobrodošao, {nickname}!"
+                                    };
+                                    Send(handler, JsonSerializer.Serialize(init) + "<EOF>");
+
+                                    // ostalima kazemo da je dosao novi
+                                    var joined = new { Type = "user_joined", User = nickname };
+                                    Broadcast(JsonSerializer.Serialize(joined) + "<EOF>", handler);
+                                }
+                                else if (msg.Type == "message")
+                                {
+                                    var sender = klijenti[handler];
+                                    var broadcastMsg = new Message
+                                    {
+                                        Type = "message",
+                                        From = sender.Nickname,
+                                        Text = msg.Text
+                                    };
+                                    Broadcast(JsonSerializer.Serialize(broadcastMsg) + "<EOF>", handler);
+                                }
+                                else if (msg.Type == "privateMessage")
+                                {
+                                    var sender = klijenti[handler];
+                                    var pm = new Message
+                                    {
+                                        Type = "privateMessage",
+                                        From = sender.Nickname,
+                                        To = msg.To,
+                                        Text = msg.Text
+                                    };
+
+                                    string pmJson = JsonSerializer.Serialize(pm) + "<EOF>";
+                                    var target = klijenti.Values.FirstOrDefault(c => c.Nickname == msg.To);
+
+                                    if (target != null)
+                                        Send(target.Socket, pmJson);
+
+                                    // i sebi salje kopiju
+                                    Send(handler, pmJson);
+                                }
                         }
-                        else if (msg.Type.Equals("message"))
+                        catch (JsonException)
                         {
-                            ClientInfo sender = klijenti[handler];
-                            Console.WriteLine($"[{sender.Nickname}]: {msg.Text}");
-
-                            Message broadcastMsg = new Message
-                            {
-                                Type = "message",
-                                From = sender.Nickname,
-                                Text = msg.Text
-                            };
-
-                            string broadcastJson = JsonSerializer.Serialize(broadcastMsg) + "<EOF>";
-                            Broadcast(broadcastJson, handler);
-
+                            content = frame + content;
+                            break;
                         }
-
-                        state.sb.Clear();
+                        
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine("Greska: " + ex.Message);
+                        }
                     }
+                    state.sb.Clear();
+                    state.sb.Append(content);
 
                     handler.BeginReceive(state.buffer, 0, ObjectState.bufferSize, 0, new AsyncCallback(ReadCallBack), state);
                 }
             }
-            catch (Exception ex)
+            catch
             {
                 Disconnect(handler);
-                Console.WriteLine($"Greška u ReadCallBack: {ex.Message}");
             }
         }
         private static void Disconnect(Socket handler)
@@ -131,6 +169,8 @@ namespace ChatServer.Services
 
                     Console.WriteLine($"klijent {user.Nickname} se diskonektovao. ");
                     klijenti.Remove(handler);
+                    
+                    ChatShared.Models.ActiveClients.Remove(user.Nickname);
 
                     Message msg = new Message
                     {
@@ -139,8 +179,13 @@ namespace ChatServer.Services
 
 
                     };
-
-                    Broadcast(JsonSerializer.Serialize(msg) + "<EOF>", handler);
+                    var leftMsg = new
+                    {
+                        Type = "user_left",
+                        User = user.Nickname
+                    };
+                    Broadcast(JsonSerializer.Serialize(leftMsg)+"<EOF>", handler);  
+                    //Broadcast(JsonSerializer.Serialize(msg) + "<EOF>", handler);
 
                 }
             }
@@ -153,7 +198,7 @@ namespace ChatServer.Services
         }
         private static void Broadcast(string message, Socket sender)
         {
-            byte[] data = Encoding.ASCII.GetBytes(message);
+            byte[] data = Encoding.UTF8.GetBytes(message);
 
             lock (klijenti)
             {
@@ -161,6 +206,7 @@ namespace ChatServer.Services
                 {
                     if (klijent.Key != sender)
                     {
+                        //asinhroni poziv bez blokiranja niti 
                         klijent.Key.BeginSend(data, 0, data.Length, 0, new AsyncCallback(SendCallBack), klijent.Key);
                     }
                 }
@@ -169,10 +215,10 @@ namespace ChatServer.Services
 
         private static void Send(Socket handler, string content)
         {
-            byte[] byteData = Encoding.ASCII.GetBytes(content);
+            byte[] byteData = Encoding.UTF8.GetBytes(content);
             handler.BeginSend(byteData, 0, byteData.Length, 0, new AsyncCallback(SendCallBack), handler);
         }
-
+        // kaze uspesno je poslata ili hvata gresku da nije
         private static void SendCallBack(IAsyncResult ar)
         {
             try

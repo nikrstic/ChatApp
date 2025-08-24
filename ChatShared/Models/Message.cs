@@ -12,5 +12,6 @@ namespace ChatShared.Models
         public string From { get; set; }
 
         public string Text { get; set; }
+        public string To { get; set; }
     }
 }
