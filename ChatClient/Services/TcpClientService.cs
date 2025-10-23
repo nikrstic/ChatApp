@@ -20,7 +20,7 @@ namespace ChatClient.Services
         public event Action Disconnected;
 
 
-        
+
 
         private class ObjectState
         {
@@ -36,20 +36,14 @@ namespace ChatClient.Services
         {
             try
             {
-                
-
                 // Uzmi IPv4 adresu
                 var entry = Dns.GetHostEntry(host);
                 var ip = entry.AddressList.First(a => a.AddressFamily == AddressFamily.InterNetwork);
                 var endPoint = new IPEndPoint(ip, _port);
-                
-           
-                
+
                 _client = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
                 _client.BeginConnect(endPoint, ConnectionCallback, nickname); // prosledimo nickname u state
-                // ovde ga prebacio da se salje sto pre
-                var join = new Message { Type = "join", From = nickname };
-                SendMessage(join);
+                // join poruka se šalje u ConnectionCallback nakon uspostavljanja konekcije
             }
             catch (Exception ex)
             {
@@ -62,15 +56,14 @@ namespace ChatClient.Services
             try
             {
                 _client.EndConnect(ar);
-                
 
                 string nickname = (string)ar.AsyncState;
-                
+
                 Connected?.Invoke();
-                 
-                //// Posalji join kad se povezes - prebacio negde ranije da se ne desavaju problemi
-                //var join = new Message { Type = "join", From = nickname };
-                //SendMessage(join);
+
+                // Pošalji join poruku nakon uspostavljanja konekcije
+                var join = new Message { Type = "join", From = nickname };
+                SendMessage(join);
 
                 BeginReceive();
             }
@@ -115,19 +108,20 @@ namespace ChatClient.Services
                 {
                     string frame = data.Substring(0, idx);
                     data = data.Substring(idx + 5);
-
+                    // obavesti sve pretplatnike
                     MessageReceived?.Invoke(frame);
-                   
 
-                    
-                    
+
+
+
                 }
-
+                // sacuvaj ono sto nije kompletno stiglo
                 _accumulator.Clear();
-                _accumulator.Append(data);
+                if(!string.IsNullOrEmpty(data))
+                    _accumulator.Append(data);
 
                 // nastavi da primas
-                BeginReceive();
+                _client.BeginReceive(state.Buffer, 0, ObjectState.BufferSize, SocketFlags.None, ReceiveCallback, state);
             }
             catch (ObjectDisposedException)
             {
@@ -153,7 +147,7 @@ namespace ChatClient.Services
             byte[] data = Encoding.UTF8.GetBytes(payload);
             _client.BeginSend(data, 0, data.Length, SocketFlags.None, SendCallback, null);
         }
-
+        
         private void SendCallback(IAsyncResult ar)
         {
             try { _client.EndSend(ar); }
