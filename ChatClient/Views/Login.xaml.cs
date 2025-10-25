@@ -40,11 +40,11 @@ namespace ChatClient.Views
             }
             var service = new TcpClientService(port: 3234);
             
-            service.StartClient("127.0.0.1", nickname);
+            
             
             var emojiVM = new EmojiViewModel();
             emojiVM.LoadEmojis();
-            
+            service.StartClient("127.0.0.1", nickname);
             var vm = new ChatViewModel(service, nickname,emojiVM);
             
             

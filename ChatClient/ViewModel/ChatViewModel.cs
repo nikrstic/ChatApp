@@ -6,6 +6,7 @@ using ChatClient.Views;
 using ChatShared.Models;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Input;
@@ -107,6 +108,7 @@ namespace ChatClient.ViewModels
 
                 var msg = JsonSerializer.Deserialize<Message>(payload);
 
+                Debug.WriteLine($"[UI TEST] Received payload: {payload}");
 
                 Application.Current.Dispatcher.Invoke(() =>
                 {
@@ -205,7 +207,7 @@ namespace ChatClient.ViewModels
         }
 
         public event PropertyChangedEventHandler PropertyChanged;
-        private void OnPropertyChanged(string name) =>
+        private void OnPropertyChanged(string name) =>  
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
 
 

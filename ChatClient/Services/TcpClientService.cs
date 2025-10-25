@@ -1,6 +1,7 @@
-﻿using ChatShared.Models;
+﻿using ChatClient.Services;
+using ChatShared.Models;
 using System;
-using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
@@ -19,9 +20,6 @@ namespace ChatClient.Services
         public event Action Connected;
         public event Action Disconnected;
 
-
-
-
         private class ObjectState
         {
             public const int BufferSize = 4096;
@@ -32,21 +30,23 @@ namespace ChatClient.Services
         {
             _port = port;
         }
+
         public void StartClient(string host, string nickname)
         {
             try
             {
-                // Uzmi IPv4 adresu
                 var entry = Dns.GetHostEntry(host);
                 var ip = entry.AddressList.First(a => a.AddressFamily == AddressFamily.InterNetwork);
                 var endPoint = new IPEndPoint(ip, _port);
 
+                Debug.WriteLine($"[CLIENT] Connecting to {ip}:{_port} as '{nickname}'...");
+
                 _client = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-                _client.BeginConnect(endPoint, ConnectionCallback, nickname); // prosledimo nickname u state
-                // join poruka se šalje u ConnectionCallback nakon uspostavljanja konekcije
+                _client.BeginConnect(endPoint, ConnectionCallback, nickname);
             }
             catch (Exception ex)
             {
+                Debug.WriteLine($"[CLIENT ERROR] StartClient: {ex.Message}");
                 MessageReceived?.Invoke($"[ERROR]: {ex.Message}");
             }
         }
@@ -56,19 +56,22 @@ namespace ChatClient.Services
             try
             {
                 _client.EndConnect(ar);
-
                 string nickname = (string)ar.AsyncState;
+                Debug.WriteLine($"[CLIENT] Connected to server as '{nickname}'");
+
+                BeginReceive();
 
                 Connected?.Invoke();
 
-                // Pošalji join poruku nakon uspostavljanja konekcije
                 var join = new Message { Type = "join", From = nickname };
+                Debug.WriteLine($"[CLIENT] Sending join message: {JsonSerializer.Serialize(join)}");
                 SendMessage(join);
 
-                BeginReceive();
+                
             }
             catch (Exception ex)
             {
+                Debug.WriteLine($"[CLIENT ERROR] ConnectionCallback: {ex.Message}");
                 MessageReceived?.Invoke($"[ERROR]: {ex.Message}");
             }
         }
@@ -78,10 +81,12 @@ namespace ChatClient.Services
             try
             {
                 var state = new ObjectState();
+                Debug.WriteLine("[CLIENT] BeginReceive()");
                 _client.BeginReceive(state.Buffer, 0, ObjectState.BufferSize, SocketFlags.None, ReceiveCallback, state);
             }
             catch (Exception ex)
             {
+                Debug.WriteLine($"[CLIENT ERROR] BeginReceive: {ex.Message}");
                 MessageReceived?.Invoke($"[ERROR]: {ex.Message}");
             }
         }
@@ -93,14 +98,18 @@ namespace ChatClient.Services
             try
             {
                 int bytes = _client.EndReceive(ar);
+
                 if (bytes <= 0)
                 {
-                    // Server zatvorio konekciju
+                    Debug.WriteLine("[CLIENT] Server closed connection.");
                     Disconnected?.Invoke();
                     return;
                 }
 
-                _accumulator.Append(Encoding.UTF8.GetString(state.Buffer, 0, bytes));
+                string chunk = Encoding.UTF8.GetString(state.Buffer, 0, bytes);
+                Debug.WriteLine($"\n[CLIENT] Received {bytes} bytes: {chunk}");
+
+                _accumulator.Append(chunk);
                 string data = _accumulator.ToString();
 
                 int idx;
@@ -108,27 +117,32 @@ namespace ChatClient.Services
                 {
                     string frame = data.Substring(0, idx);
                     data = data.Substring(idx + 5);
-                    // obavesti sve pretplatnike
+
+                    Debug.WriteLine($"[CLIENT] Extracted frame:\n{frame}\n-------------------------");
                     MessageReceived?.Invoke(frame);
-
-
-
-
                 }
-                // sacuvaj ono sto nije kompletno stiglo
-                _accumulator.Clear();
-                if(!string.IsNullOrEmpty(data))
-                    _accumulator.Append(data);
 
-                // nastavi da primas
+                _accumulator.Clear();
+                if (!string.IsNullOrEmpty(data))
+                {
+                    _accumulator.Append(data);
+                    Debug.WriteLine($"[CLIENT] Remaining partial data in accumulator: {data}");
+                }
+                else
+                {
+                    Debug.WriteLine("[CLIENT] No partial data remaining.");
+                }
+
+                Debug.WriteLine("[CLIENT] Waiting for next data...\n");
                 _client.BeginReceive(state.Buffer, 0, ObjectState.BufferSize, SocketFlags.None, ReceiveCallback, state);
             }
             catch (ObjectDisposedException)
             {
-                // socket zatvoren 
+                Debug.WriteLine("[CLIENT] Socket closed.");
             }
             catch (Exception ex)
             {
+                Debug.WriteLine($"[CLIENT ERROR] ReceiveCallback: {ex.Message}");
                 MessageReceived?.Invoke($"[ERROR]: {ex.Message}");
                 Disconnected?.Invoke();
             }
@@ -137,28 +151,47 @@ namespace ChatClient.Services
         public void SendMessage(Message msg)
         {
             string json = JsonSerializer.Serialize(msg) + "<EOF>";
+            Debug.WriteLine($"[CLIENT] Sending message: {json}");
             SendRaw(json);
         }
 
         public void SendRaw(string payload)
         {
-            if (_client == null || !_client.Connected) return;
+            if (_client == null || !_client.Connected)
+            {
+                Debug.WriteLine("[CLIENT] Attempted to send, but not connected.");
+                return;
+            }
 
             byte[] data = Encoding.UTF8.GetBytes(payload);
             _client.BeginSend(data, 0, data.Length, SocketFlags.None, SendCallback, null);
         }
-        
+
         private void SendCallback(IAsyncResult ar)
         {
-            try { _client.EndSend(ar); }
-            catch { /* ignore */ }
+            try
+            {
+                _client.EndSend(ar);
+                Debug.WriteLine("[CLIENT] Message sent successfully.");
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[CLIENT ERROR] SendCallback: {ex.Message}");
+            }
         }
 
         public void Disconnect()
         {
-            try { _client?.Shutdown(SocketShutdown.Both); } catch { }
+            try
+            {
+                Debug.WriteLine("[CLIENT] Disconnecting...");
+                _client?.Shutdown(SocketShutdown.Both);
+            }
+            catch { }
+
             try { _client?.Close(); } catch { }
             Disconnected?.Invoke();
         }
     }
-}
+  
+    }

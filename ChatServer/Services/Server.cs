@@ -130,7 +130,7 @@ namespace ChatServer.Services
                             };
                             Console.WriteLine("handler i init: "+ handler.ToString() + " " + init);
                             Send(handler, JsonSerializer.Serialize(init) + "<EOF>");
-                            Thread.Sleep(20);
+                            Thread.Sleep(50);
                             // obavesti ostale da se pridruzio
                             var joined = new { Type = "user_joined", User = nickname };
                             Broadcast(JsonSerializer.Serialize(joined) + "<EOF>", handler);
@@ -295,7 +295,7 @@ namespace ChatServer.Services
                 Socket handler = (Socket)ar.AsyncState;
                 int bytes = handler.EndSend(ar);
                 // najmanje log da ne zatrpavamo konzolu
-                // Console.WriteLine($"Sent {bytes} bytes to {handler.RemoteEndPoint}");
+                Console.WriteLine($"Sent {bytes} bytes to {handler.RemoteEndPoint}");
             }
             catch (Exception ex)
             {
